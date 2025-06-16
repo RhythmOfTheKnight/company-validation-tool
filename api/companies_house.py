@@ -15,45 +15,42 @@ SEARCH_ENDPOINT = f"{BASE_URL}/search/companies"
 
 def search_company_by_name(company_name, api_key, delay = DEFAULT_DELAY):
     """
-    Search for a company by name using the Company Name in case the CRN is missing/invalid
-    via the Companies House API
-
+    Search for companies by name via the Companies House API.
+    
     Args:
-    company_name (str): The company name from the dataset to search for.
-    api_key (str): Your Companies House API key.
-    delay (float): Delay in seconds to avoid hitting rate limits. 
-        Default is 0.4 seconds, slightly beneath the 120 request per minute limit.
-                
+        company_name (str): Company name to search for
+        api_key (str): Your Companies House API key
+        delay (float): Delay in seconds to avoid rate limits
+        
     Returns:
-        dict: Comppany data if found, otherwise None.
+        tuple: (results, match_count) where:
+            - results: JSON response containing matches (or None if error)
+            - match_count: Number of companies found (0 if error)
     """
     try:
         params = {"q": company_name}
         response = requests.get(
             SEARCH_ENDPOINT,
             params = params,
-            auth = HTTPBasicAuth(api_key, "")
+            auth = HTTPBasicAuth(api_key, ""),
+            timeout = 15
         )
 
         if response.status_code == 200:
             results = response.json()
-            
-            # Check how many matches were found
-            match_count = results.get("total_results", 0)
+            match_count = int(results.get("total_results", 0))
             logger.info(f"Found {match_count} possible matches for '{company_name}'")
-            return results
-
-            # Try to find an exact match
-
-
-            return response.json()
+            return results, match_count
+        elif response.status_code == 429:
+            logger.warning("Rate limit exceeded. Please check the rate limiting factor and adhere to 600 requests per 5 minuts")
+            return None, 0
         else:
             logger.error(f"Error searching for company {company_name}: {response.status_code} - {response.text}")
-            return None
+            return None, 0
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Request failed: {e}")
-        return None
+        return None, 0
     finally:
         time.sleep(delay) # Adhere to the rate limit 
 
@@ -68,11 +65,13 @@ def get_company_data(company_number, api_key, delay = DEFAULT_DELAY):
                        Default is 0.4 seconds, slightly beneath the 120 request per minute limit.
                 
     Returns:
-        dict: Comppany data if found, otherwise None.
+        dict: Json of company data if found, otherwise None.
     """
     try:
-        response = requests.get(f"{COMPANY_ENDPOINT}{company_number}",
-            auth = HTTPBasicAuth(api_key, "")
+        response = requests.get(
+            f"{COMPANY_ENDPOINT}{company_number}",
+            auth = HTTPBasicAuth(api_key, ""),
+            timeout = 15
         )
 
         if response.status_code == 200:
