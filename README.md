@@ -15,20 +15,35 @@ This project helps ensure data accuracy by cross-referencing internal company da
 
 ## Current Structure
 company_validation/
+├── __init__.py
+├── main.py                    # CLI entry point
+├── config.py                  # Configuration settings
 ├── api/
 │   ├── __init__.py
 │   ├── companies_house.py     # API interaction functions
 │   └── testing.py             # Test scripts
 ├── matchers/
 │   ├── __init__.py
-│   └── company_matcher.py     # Company matching logic (planned)
+│   └── company_matcher.py     # Company matching logic
 ├── utils/
 │   ├── __init__.py
-│   └── string_utils.py        # Helper functions for text processing (planned)
+│   ├── string_utils.py        # String processing utilities
+│   └── validation_utils.py    # Validation helper functions
 ├── validators/
-│   └── __init__.py            # Validation functions (planned)
-├── exploration.ipynb          # Development notebook with examples
-└── __init__.py
+│   ├── __init__.py
+│   ├── batch_validator.py     # Batch processing
+│   └── field_validators.py    # Individual field validation
+├── reporters/
+│   ├── __init__.py
+│   └── excel_reporter.py     # Excel output generation
+├── DataSets/
+│   └── master.xlsx           # Input data
+├── tests/
+│   ├── __init__.py
+│   ├── test_api.py
+│   ├── test_matchers.py
+│   └── test_validators.py
+└── requirements.txt
 
 ## Features Implemented
 

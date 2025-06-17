@@ -1,7 +1,9 @@
 import logging 
+import pandas as pd
 from datetime import datetime
 from ..api.companies_house import get_company_data, search_company_by_name
 from ..utils.string_utils import normalize_company_name, is_match
+from ..utils.validation_utils import extract_crn_from_row, extract_company_name_from_row, is_valid_crn
 
 # Begin logging 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ def find_match(search_results, company_name):
     global exact_matches
     global close_matches
     if not search_results or "items" not in search_results:
-        return None
+        return None, True  # No results found, return None and indicate update needed
     
     # Hopefully this works first time around
     for result in search_results.get("items", []):
@@ -86,13 +88,12 @@ def score_company_match(search_result, dataset_row):
     Returns:
         int: Similarity score from 1-10, with 10 indicating highest confidence match
     """
-    import pandas as pd
     score = 0
 
     # Get name from dataset row and companies house API search result entry
     dataset_name = ""
-    if "Companies House Name" in dataset_row.index and not pd.isna(dataset_row["Companies House Name"]):
-        dataset_name = str(dataset_row["Companies House Name"]).lower()    
+    if "Companies House name" in dataset_row.index and not pd.isna(dataset_row["Companies House name"]):
+        dataset_name = str(dataset_row["Companies House name"]).lower()    
     api_name = search_result.get("title","").lower()
 
     # Normalise names
@@ -134,6 +135,7 @@ def score_company_match(search_result, dataset_row):
 
     # 2. Incorporation date (up to 3 points)
     if "Date Company Incorporated" in dataset_row.index and "date_of_creation" in search_result:
+        dataset_date = ""
         try:
             api_date = search_result.get("date_of_creation", "")
 
@@ -164,14 +166,124 @@ def score_company_match(search_result, dataset_row):
 
     return score
 
-def find_best_company_match():
+
+
+def find_best_company_match(dataset_row, api_key):
     """
+    Find the best matching company from Companies House for a given dataset row.
+    This function first attempts to search by CRN, then by company name.
 
     Args:
+        dataset_row (pandas.Series): Row from dataset containing company information
+        api_key (str): Your Companies House API key
 
-    Returns: 
+    Returns:
+        tuple: (company_data, match_type, match_confidence)
+    """
+
+    company_name = ""  # Ensure company_name is always defined
+
+    # First try CRN if avaiable
+    crn = extract_crn_from_row(dataset_row)
+    if crn:
+        logger.info(f"Searching for company by CRN: {crn}")
+        # Get company data by CRN
+        company_data = get_company_data(crn, api_key)
+        if company_data:
+            logger.info(f"Company found by CRN: {company_data.get('company_name', 'Unknown')}")
+            return company_data, "crn_match", 10
+            
+    # If CRN is not matched, try searching by name
+    company_name = extract_company_name_from_row(dataset_row)
+    if company_name:
+        logger.info(f"Searching for company by name: {company_name}")
+        
+        # Search for companies by name
+        search_results, match_count = search_company_by_name(company_name, api_key)
     
-    """    
-    return None
+        if match_count > 0:
+            matched_company, needs_update = find_match(search_results, company_name)
+            if matched_company:
+                full_company_data = get_company_data(matched_company["company_number"], api_key)
+                company_data = extract_company_fields(full_company_data)
+                logger.info(f"Company found by name: {company_data.get('name', 'Unknown')}")
+                return company_data, "name_match", 10
+            else:
+                # if no exact match, score the best match
+                best_score = 0
+                best_company = []
+                if search_results is not None:
+                    for result in search_results.get("items", []):
+                        score = score_company_match(result, dataset_row)
+                        if score == best_score:
+                            best_company.append(result)
+                        elif score > best_score:
+                            best_score = score
+                            best_company = [result]
+                if len(best_company) == 1:
+                    logger.info(f"Best match found by name: {best_company[0].get('title', 'Unknown')} with score {best_score}")
+                    full_data = get_company_data(best_company[0]["company_number"], api_key)
+                    company_data = extract_company_fields(full_data) if full_data else None
+                    return company_data, "best_name_match", best_score
+                elif len(best_company) > 1:
+                    logger.info(f"Multiple best matches found by name, return all process manually: {best_company[0].get('title', 'Unknown')}")
+                    # Only process if the score is above a certain threshold to avoid false positives
+                    if best_score >6:
+                        company_data = []
+                        for comp in best_company:
+                            full_data = get_company_data(comp["company_number"], api_key)
+                            if full_data:
+                                company_data.append(extract_company_fields(full_data))
+                        logger.info(f"Multiple best matches found with score {best_score}")
+                        return company_data, "multiple_best_name_matches", best_score
+                    else:
+                        logger.info(f"Multiple best matches found but score is too low: {best_score}")
+                        return None, "multiple_best_name_matches_low_score", best_score
+    # If no CRN or name match found, log and return None
+    logger.info(f"No companies found matching name: {company_name}")
+    # If no matches found, return None
+    return None, "no_match", 0
 
 
+def extract_company_fields(company_data):
+    """
+    Extract fields from the companies house API response. 
+    
+    Args:
+        company_data (dict): JSON response from Companies House API
+        
+    Returns:
+        dict: Standardized company data with the following fields
+            - "Company Name"
+            - "Company Number"
+            - "Incorporation Date"
+            - "Company Status"
+            - "Company Type"
+            - "Address"
+    """
+
+    result = {
+        "name" : company_data.get("company_name", ""),
+        "crn" : company_data.get("company_number", ""),
+        "status" : company_data.get("company_status", ""),
+        "inc_date" : company_data.get("date_of_creation", ""),
+        "dissolution_date" : company_data.get("date_of_dissolution", ""), 
+        "type" : company_data.get("company_type", ""),
+        "sic_codes" : company_data.get("sic_codes", []),
+    }
+
+    # Extract address if available 
+    if "registered_office_address" in company_data:
+        address = company_data["registered_office_address"]
+        address_parts = []
+        for field in ["address_line_1", "address_line_2", "locality", "region", "postal_code", "country"]:
+            if field in address and address[field]:
+                address_parts.append(address[field])
+
+        result["address"] = ", ".join(address_parts)
+        result["locality"] = address.get("locality", "")
+    else:
+        result["address"] = ""
+        result["locality"] = ""
+
+    return result
