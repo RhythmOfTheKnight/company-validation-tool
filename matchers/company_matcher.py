@@ -1,16 +1,12 @@
 import logging 
 import pandas as pd
-from datetime import datetime
-from ..api.companies_house import get_company_data, search_company_by_name
-from ..utils.string_utils import normalize_company_name, is_match
-from ..utils.validation_utils import extract_crn_from_row, extract_company_name_from_row, is_valid_crn
+from datetime import datetime, date
+from api.companies_house import get_company_data, search_company_by_name
+from utils.string_utils import normalize_company_name, is_match
+from utils.validation_utils import extract_crn_from_row, extract_company_name_from_row, extract_fallback_company_name_from_row, is_valid_crn
+from utils.company_type_utils import extract_company_fields
 
-# Begin logging 
 logger = logging.getLogger(__name__)
-
-# Variables in the file
-exact_matches = 0 
-close_matches = 0
 
 def find_match(search_results, company_name):
     """
@@ -26,41 +22,33 @@ def find_match(search_results, company_name):
             - matched_company: Company data if match found, None otherwise
             - needs_update: Boolean indicating if record needs updating
     """
-    global exact_matches
-    global close_matches
     if not search_results or "items" not in search_results:
         return None, True  # No results found, return None and indicate update needed
     
-    # Hopefully this works first time around
+    # Try exact match first
     for result in search_results.get("items", []):
         if "title" in result:
-            API_company = result["title"]
-            if is_match(API_company, company_name):
+            api_company = result["title"]
+            if is_match(api_company, company_name):
                 logger.info(f"Exact match found for company: {company_name}")
-                exact_matches += 1 
                 return result, False
-        
-    # For efficency sake, we check other critieria in another loop 
+          # Try case insensitive match
     for result in search_results.get("items", []):
         if "title" in result:
-            API_company = result["title"]
-            # Compare case insensitive by using .lower()
-            if is_match(API_company.lower(), company_name.lower()):
-                logger.info(f"Match found for company when ignoring cases: {API_company}")
-                close_matches += 1
+            api_company = result["title"]
+            if is_match(api_company.lower(), company_name.lower()):
+                logger.info(f"Match found for company when ignoring cases: {api_company}")
                 return result, True
             # Calling the normalise function on company name
-            if is_match(API_company, normalize_company_name(company_name)):
-                logger.info(f"Match found for company when normalising company name in the dataset {API_company}")
-                close_matches += 1
+            if is_match(normalize_company_name(api_company), normalize_company_name(company_name)):
+                logger.info(f"Match found for company when normalising company name in the dataset {api_company}")
                 return result, True
             # Simultaneously call normalise and ignore case
-            if is_match(API_company.lower(), normalize_company_name(company_name).lower()):
-                logger.info(f"When normalising both company name and doing case insensitive matching, match found for: {API_company}")
-                close_matches += 1
+            if is_match((normalize_company_name(api_company).lower()), normalize_company_name(company_name).lower()):
+                logger.info(f"When normalising both company name and doing case insensitive matching, match found for: {api_company}")
                 return result, True
 
-    # Otherwise RIP        
+    # No match found
     return None, True
     
 def score_company_match(search_result, dataset_row):
@@ -91,36 +79,30 @@ def score_company_match(search_result, dataset_row):
     score = 0
 
     # Get name from dataset row and companies house API search result entry
-    dataset_name = ""
-    if "Companies House name" in dataset_row.index and not pd.isna(dataset_row["Companies House name"]):
-        dataset_name = str(dataset_row["Companies House name"]).lower()    
-    api_name = search_result.get("title","").lower()
+    dataset_name = extract_company_name_from_row(dataset_row) or ""
+    api_raw = search_result.get("title","")
 
-    # Normalise names
-    api_name_norm = normalize_company_name(api_name).lower()
-    dataset_name_norm = normalize_company_name(dataset_name).lower()
-    
-    # Partial match - one contains the other
-    if api_name_norm in dataset_name_norm or dataset_name_norm in api_name_norm:
-        if len(api_name_norm) > 15 and len(dataset_name_norm) > 15:
-            # 7 points to gryffindor 
+    api_norm = normalize_company_name(api_raw).lower()
+    dataset_norm = normalize_company_name(dataset_name).lower()    # Partial match - one contains the other
+    if api_norm in dataset_norm or dataset_norm in api_norm:
+        if len(api_norm) > 15 and len(dataset_norm) > 15:
+            # 7 points to Gryffindor
             score += 7
-        elif len(api_name_norm) > 10 and len(dataset_name_norm) > 10:
-            # 4 points to Hufflepuff
+        elif len(api_norm) > 10 and len(dataset_norm) > 10:
+            # 4 points to Slytherin
             score += 4
         else:
-            # 2 points to Slytherin
             score += 2
     # Otherwise see if they have words in common
     else:
         # Define common terms to ignore in company names
-        common_terms = {'limited', 'ltd', 'llp', 'plc', 'inc', 'incorporated', 
-                    'corporation', 'corp', 'company', 'co', 'group', 'holdings',
-                    'holding', 'services', 'international', 'uk', 'the', 'and', 'of'}
+        common_terms = {"limited", "ltd", "llp", "plc", "inc", "incorporated", 
+                    "corporation", "corp", "company", "co", "group", "holdings",
+                    "holding", "services", "international", "uk", "the", "and", "of"}
         
         # Filter out common terms
-        api_words = set(w for w in api_name_norm.split() if w.lower() not in common_terms)
-        dataset_words = set(w for w in dataset_name_norm.split() if w.lower() not in common_terms)
+        api_words = set(w for w in api_norm.split() if w.lower() not in common_terms)
+        dataset_words = set(w for w in dataset_norm.split() if w.lower() not in common_terms)
 
         if api_words and dataset_words:  # Make sure we still have words left
             common_words = api_words.intersection(dataset_words)
@@ -131,32 +113,14 @@ def score_company_match(search_result, dataset_row):
                 # Award up to 3 points based on similar words (non-common terms)
                 word_score = round(match_ratio * 3)
                 score += word_score
-                logger.debug(f"Word overlap score: {word_score}, matching words: {common_words}")
-
-    # 2. Incorporation date (up to 3 points)
+                logger.debug(f"Word overlap score: {word_score}, matching words: {common_words}")    # 2. Incorporation date (up to 3 points)
     if "Date Company Incorporated" in dataset_row.index and "date_of_creation" in search_result:
-        dataset_date = ""
-        try:
-            api_date = search_result.get("date_of_creation", "")
-
-            # Handle potential NaN values
-            if not pd.isna(dataset_row["Date Company Incorporated"]):
-                dataset_date = str(dataset_row["Date Company Incorporated"])
-
-            if api_date == dataset_date:
-                score += 3
-        except (ValueError, TypeError):        
-            pass
-    
-    # 3. Location/address (up to 2 points)
-    if "Headquarters location" in dataset_row.index and not pd.isna(dataset_row["Headquarters location"]):
-        dataset_location = str(dataset_row['Headquarters location']).lower()
-
-        if "registered_office_address" in search_result and "locality" in search_result["registered_office_address"]:
-            locality = search_result["registered_office_address"]["locality"].lower()
-
-            if locality and locality in dataset_location:
-                score +=2
+        from utils.data_utils import parse_date_safely
+        api_date = search_result.get("date_of_creation", "")
+        dataset_date = parse_date_safely(dataset_row["Date Company Incorporated"])
+        if dataset_date and api_date == dataset_date:
+            # 3 points to Hufflepuff 
+            score += 3
     
     # Ensure minimum score of 1
     score = max(1, score)
@@ -171,119 +135,104 @@ def score_company_match(search_result, dataset_row):
 def find_best_company_match(dataset_row, api_key):
     """
     Find the best matching company from Companies House for a given dataset row.
-    This function first attempts to search by CRN, then by company name.
-
-    Args:
-        dataset_row (pandas.Series): Row from dataset containing company information
-        api_key (str): Your Companies House API key
-
+    Attempts, in order:
+      1) CRN lookup (10pt, no manual review)
+      2) Fallback-name search if CRN invalid (8pt, manual review)
+      3) Name search:
+         • exact/name-match (10pt, no manual review)
+         • best-scored match (score, manual review if <10)
     Returns:
-        tuple: (company_data, match_type, match_confidence)
+        (company_data, match_type, match_confidence, needs_manual_review)
     """
+    needs_manual_review = False
+    match_type = None
+    company_data = None
+    confidence = 0
 
-    company_name = ""  # Ensure company_name is always defined
-
-    # First try CRN if avaiable
+    # 1) CRN lookup
     crn = extract_crn_from_row(dataset_row)
     if crn:
-        logger.info(f"Searching for company by CRN: {crn}")
-        # Get company data by CRN
-        company_data = get_company_data(crn, api_key)
-        if company_data:
-            logger.info(f"Company found by CRN: {company_data.get('company_name', 'Unknown')}")
-            return company_data, "crn_match", 10
-            
-    # If CRN is not matched, try searching by name
-    company_name = extract_company_name_from_row(dataset_row)
-    if company_name:
-        logger.info(f"Searching for company by name: {company_name}")
-        
-        # Search for companies by name
-        search_results, match_count = search_company_by_name(company_name, api_key)
-    
-        if match_count > 0:
-            matched_company, needs_update = find_match(search_results, company_name)
-            if matched_company:
-                full_company_data = get_company_data(matched_company["company_number"], api_key)
-                company_data = extract_company_fields(full_company_data)
-                logger.info(f"Company found by name: {company_data.get('name', 'Unknown')}")
-                return company_data, "name_match", 10
-            else:
-                # if no exact match, score the best match
-                best_score = 0
-                best_company = []
-                if search_results is not None:
-                    for result in search_results.get("items", []):
-                        score = score_company_match(result, dataset_row)
-                        if score == best_score:
-                            best_company.append(result)
-                        elif score > best_score:
-                            best_score = score
-                            best_company = [result]
-                if len(best_company) == 1:
-                    logger.info(f"Best match found by name: {best_company[0].get('title', 'Unknown')} with score {best_score}")
-                    full_data = get_company_data(best_company[0]["company_number"], api_key)
-                    company_data = extract_company_fields(full_data) if full_data else None
-                    return company_data, "best_name_match", best_score
-                elif len(best_company) > 1:
-                    logger.info(f"Multiple best matches found by name, return all process manually: {best_company[0].get('title', 'Unknown')}")
-                    # Only process if the score is above a certain threshold to avoid false positives
-                    if best_score >6:
-                        company_data = []
-                        for comp in best_company:
-                            full_data = get_company_data(comp["company_number"], api_key)
-                            if full_data:
-                                company_data.append(extract_company_fields(full_data))
-                        logger.info(f"Multiple best matches found with score {best_score}")
-                        return company_data, "multiple_best_name_matches", best_score
-                    else:
-                        logger.info(f"Multiple best matches found but score is too low: {best_score}")
-                        return None, "multiple_best_name_matches_low_score", best_score
-    # If no CRN or name match found, log and return None
-    logger.info(f"No companies found matching name: {company_name}")
-    # If no matches found, return None
-    return None, "no_match", 0
+        logger.info(f"Searching by CRN: {crn}")
+        raw = get_company_data(crn, api_key)
+        if raw:
+            std = extract_company_fields(raw)
+            logger.info(f"CRN match found: {std['name']} ({std['crn']})")
+            return std, "crn_match", 10, False
 
+    # 2) Name search (try Companies House name first, then Company Name)
+    # This runs whether CRN was missing or CRN lookup failed
+    name = extract_company_name_from_row(dataset_row)
+    if name:
+        logger.info(f"Searching by name: {name}")
+        results, count = search_company_by_name(name, api_key)
+        if count:
+            matched, needs_update = find_match(results, name)
+            if matched:
+                full = get_company_data(matched["company_number"], api_key)
+                if full:
+                    company_data = extract_company_fields(full)
+                    match_type = "name_match"
+                    confidence = 10
+                    needs_manual_review = False  # Perfect matches don't need manual review
+                    return company_data, match_type, confidence, needs_manual_review            # Score main name search results if no exact match
+            company_data, confidence, needs_manual_review = find_best_scored_match(results, dataset_row, api_key)
+            if company_data:
+                return company_data, "best_name_match", confidence, needs_manual_review
 
-def extract_company_fields(company_data):
+    # 3) Fallback to Company Name field if Companies House name search failed
+    fallback_name = extract_fallback_company_name_from_row(dataset_row)
+    if fallback_name and fallback_name != name:  # Only try if different from Companies House name
+        logger.info(f"Searching by fallback name: {fallback_name}")
+        results, count = search_company_by_name(fallback_name, api_key)
+        if count:
+            matched, _ = find_match(results, fallback_name)
+            if matched:
+                full = get_company_data(matched["company_number"], api_key)
+                if full:
+                    company_data = extract_company_fields(full)
+                    match_type = "fallback_name_match"
+                    confidence = 8
+                    needs_manual_review = True
+                    return company_data, match_type, confidence, needs_manual_review            # Score fallback results if no exact match
+            company_data, confidence, needs_manual_review = find_best_scored_match(results, dataset_row, api_key)
+            if company_data:
+                return company_data, "best_fallback_match", confidence, needs_manual_review# 4) No match found
+    match_type = "no_match"
+    confidence = 0
+    needs_manual_review = True
+    return None, match_type, confidence, needs_manual_review
+
+def find_best_scored_match(results, dataset_row, api_key):
     """
-    Extract fields from the companies house API response. 
+    Find the best scoring match from search results.
     
     Args:
-        company_data (dict): JSON response from Companies House API
+        results (dict): API search results
+        dataset_row (pd.Series): Dataset row for scoring
+        api_key (str): Companies House API key
         
     Returns:
-        dict: Standardized company data with the following fields
-            - "Company Name"
-            - "Company Number"
-            - "Incorporation Date"
-            - "Company Status"
-            - "Company Type"
-            - "Address"
+        tuple: (company_data, confidence, needs_manual_review) or (None, 0, True)
     """
-
-    result = {
-        "name" : company_data.get("company_name", ""),
-        "crn" : company_data.get("company_number", ""),
-        "status" : company_data.get("company_status", ""),
-        "inc_date" : company_data.get("date_of_creation", ""),
-        "dissolution_date" : company_data.get("date_of_dissolution", ""), 
-        "type" : company_data.get("company_type", ""),
-        "sic_codes" : company_data.get("sic_codes", []),
-    }
-
-    # Extract address if available 
-    if "registered_office_address" in company_data:
-        address = company_data["registered_office_address"]
-        address_parts = []
-        for field in ["address_line_1", "address_line_2", "locality", "region", "postal_code", "country"]:
-            if field in address and address[field]:
-                address_parts.append(address[field])
-
-        result["address"] = ", ".join(address_parts)
-        result["locality"] = address.get("locality", "")
-    else:
-        result["address"] = ""
-        result["locality"] = ""
-
-    return result
+    if not results:
+        return None, 0, True
+    
+    best_score = 0
+    best_items = []
+    
+    for item in results.get("items", []):
+        score = score_company_match(item, dataset_row)
+        if score > best_score:
+            best_score = score
+            best_items = [item]
+        elif score == best_score:
+            best_items.append(item)
+    
+    if best_items and len(best_items) == 1:
+        item = best_items[0]
+        full = get_company_data(item["company_number"], api_key)
+        company_data = extract_company_fields(full) if full else None
+        needs_manual_review = best_score < 10
+        return company_data, best_score, needs_manual_review
+    
+    return None, 0, True

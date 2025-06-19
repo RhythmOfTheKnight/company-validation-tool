@@ -2,18 +2,11 @@ import requests
 from requests.auth import HTTPBasicAuth
 import time 
 import logging
+from config import DEFAULT_API_DELAY, API_COMPANY_ENDPOINT, API_SEARCH_ENDPOINT
 
-
-# Begin logging 
 logger = logging.getLogger(__name__)
 
-# Constants 
-DEFAULT_DELAY = 0.4 # Most suitable delay for Companies House (Rate limit of 120 requests per minute)
-BASE_URL = "https://api.company-information.service.gov.uk"
-COMPANY_ENDPOINT  = f"{BASE_URL}/company/"
-SEARCH_ENDPOINT = f"{BASE_URL}/search/companies"
-
-def search_company_by_name(company_name, api_key, delay = DEFAULT_DELAY):
+def search_company_by_name(company_name, api_key, delay=DEFAULT_API_DELAY):
     """
     Search for companies by name via the Companies House API.
     
@@ -30,10 +23,10 @@ def search_company_by_name(company_name, api_key, delay = DEFAULT_DELAY):
     try:
         params = {"q": company_name}
         response = requests.get(
-            SEARCH_ENDPOINT,
-            params = params,
-            auth = HTTPBasicAuth(api_key, ""),
-            timeout = 15
+            API_SEARCH_ENDPOINT,
+            params=params,
+            auth=HTTPBasicAuth(api_key, ""),
+            timeout=15
         )
 
         if response.status_code == 200:
@@ -42,7 +35,7 @@ def search_company_by_name(company_name, api_key, delay = DEFAULT_DELAY):
             logger.info(f"Found {match_count} possible matches for '{company_name}'")
             return results, match_count
         elif response.status_code == 429:
-            logger.warning("Rate limit exceeded. Please check the rate limiting factor and adhere to 600 requests per 5 minuts")
+            logger.warning("Rate limit exceeded. Please check the rate limiting factor and adhere to 600 requests per 5 minutes")
             return None, 0
         else:
             logger.error(f"Error searching for company {company_name}: {response.status_code} - {response.text}")
@@ -52,11 +45,11 @@ def search_company_by_name(company_name, api_key, delay = DEFAULT_DELAY):
         logger.error(f"Request failed: {e}")
         return None, 0
     finally:
-        time.sleep(delay) # Adhere to the rate limit 
+        time.sleep(delay)
 
-def get_company_data(company_number, api_key, delay = DEFAULT_DELAY):
+def get_company_data(company_number, api_key, delay=DEFAULT_API_DELAY):
     """
-    This function gets company details from companies house API using the CRN.
+    Get company details from Companies House API using the CRN.
 
     Args:
         company_number (str): The company registration number (CRN).
@@ -65,13 +58,13 @@ def get_company_data(company_number, api_key, delay = DEFAULT_DELAY):
                        Default is 0.4 seconds, slightly beneath the 120 request per minute limit.
                 
     Returns:
-        dict: Json of company data if found, otherwise None.
+        dict: JSON of company data if found, otherwise None.
     """
     try:
         response = requests.get(
-            f"{COMPANY_ENDPOINT}{company_number}",
-            auth = HTTPBasicAuth(api_key, ""),
-            timeout = 15
+            f"{API_COMPANY_ENDPOINT}{company_number}",
+            auth=HTTPBasicAuth(api_key, ""),
+            timeout=15
         )
 
         if response.status_code == 200:
@@ -87,5 +80,5 @@ def get_company_data(company_number, api_key, delay = DEFAULT_DELAY):
         logger.error(f"Request failed: {e}")
         return None
     finally:
-        time.sleep(delay) # Adhere to the rate limit 
+        time.sleep(delay)
         
