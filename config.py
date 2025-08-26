@@ -22,6 +22,10 @@ class Columns:
     PROGRAMME = "Programme(s) attended"
     MATCH_TYPE = "match_type"
     CONFIDENCE = "confidence_score"
+    HEADQUARTERS = "Headquarters location"
+    PREVIOUS_HEADQUARTER_LOCATIONS = "Previous Admin Districts"
+    API_DATA = "api_data"
+    NEEDS_MANUAL_REVIEW = "needs_manual_review"
 
 # Column mapping for API data to Excel columns
 COLUMN_MAP = {

@@ -203,6 +203,9 @@ __pycache__/
 *.env
 secrets.py
 
-# Output files
+# Custom project ignores
+datasets/
+logs/
 *.xlsx
-*.csv
+~$*.xlsx
+.vscode/
