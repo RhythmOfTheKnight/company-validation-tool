@@ -1,6 +1,6 @@
 # Company Validation Tool
 
-A Python-based command-line tool for validating and enriching company data against official UK sources. This tool uses the Companies House API to verify company details and the Postcodes.io API to enrich location data.
+A Python-based command-line tool for validating and enriching company data against official UK sources. This tool uses the Companies House API to verify company details and the Postcodes.io API to enrich location data. Created for the DDI programme office as part of the Summer 2025 internship programme. 
 
 ## Overview
 
