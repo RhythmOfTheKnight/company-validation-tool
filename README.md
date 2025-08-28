@@ -80,6 +80,9 @@ Install all required packages from the `requirements.txt` file.
 pip install -r requirements.txt
 ```
 
+### 4. Upload Datasets and Create logs folder
+Upload your source Excel file to the `datasets` directory (needs to be created) and ensure a `logs` folder exists in the project root. This is required for logging and data processing.
+
 ## How to Use
 
 The tool is run from the command line. You must provide the path to your input file and your Companies House API key.
