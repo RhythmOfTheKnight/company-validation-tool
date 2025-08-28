@@ -89,12 +89,13 @@ The tool is run from the command line. You must provide the path to your input f
 
 ### Command
 ```bash
-python main.py --input "path/to/your/data.xlsx" --sheet "SheetName" --api_key "YOUR_API_KEY_HERE"
+python main.py --input "path/to/your/data.xlsx" --sheet "SheetName" --output "path/to/output.xlsx" --api_key "YOUR_API_KEY_HERE"
 ```
 
 ### Arguments
 - `--input`: (Required) The full path to the source Excel file containing your company data.
 - `--sheet`: (Required) The name of the worksheet within the Excel file to process.
+- `--output`: (Required) The full path where the validated and enriched Excel file will be saved.
 - `--api_key`: (Required) Your personal Companies House API key.
 
 ### Example
